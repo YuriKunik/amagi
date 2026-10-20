@@ -30,6 +30,7 @@ function App() {
   const [participants, setParticipants] = usePersistentState<Participant[]>('participants', []);
   const [expenses, setExpenses] = usePersistentState<Expense[]>('expenses', []);
   const [newName, setNewName] = useState('');
+  const [newAlias, setNewAlias] = useState('');
   
   // Expense Form State
   const [description, setDescription] = useState('');
@@ -43,26 +44,30 @@ function App() {
   const [showSummary, setShowSummary] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [copiedToast, setCopiedToast] = useState(false);
+  const [textCopiedToast, setTextCopiedToast] = useState(false);
   const [todayText] = useState<string>(getTodayFormatted);
 
   const summaryRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const addParticipant = () => {
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    if (participants.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) {
+    const trimmedName = newName.trim();
+    const trimmedAlias = newAlias.trim();
+    if (!trimmedName) return;
+    if (participants.some((p) => p.name.toLowerCase() === trimmedName.toLowerCase())) {
       alert('Ya existe un participante con ese nombre');
       return;
     }
     const newParticipant: Participant = {
       id: crypto.randomUUID(),
-      name: trimmed,
+      name: trimmedName,
+      bankAlias: trimmedAlias || undefined,
     };
     const updated = [...participants, newParticipant];
     setParticipants(updated);
     setSelectedParticipants(updated.map((p) => p.id));
     setNewName('');
+    setNewAlias('');
     setShowSummary(false);
   };
 
@@ -122,6 +127,53 @@ function App() {
   };
 
   const outingSummary = calculateOutingSummary(participants, expenses);
+
+  const getAsciiSummary = () => {
+    const separator = "------------------------------------------";
+    const header = "            🎟️ TICKET amagi 🎟️           ";
+    const date = `Fecha: ${todayText}`;
+    
+    let text = `${header}\n${date}\n${separator}\n\n`;
+    
+    text += "📊 RESUMEN GENERAL\n";
+    text += `Total Gastado: ${formatCurrency(outingSummary.totalCost)}\n`;
+    text += `Promedio por persona: ${formatCurrency(outingSummary.averagePerPerson)}\n\n`;
+
+    text += "📝 DETALLE DE GASTOS\n";
+    expenses.forEach(e => {
+      const payer = participants.find(p => p.id === e.payerId)?.name || 'Desconocido';
+      text += `- ${e.description}: ${formatCurrency(e.amount)} (Pagó: ${payer})\n`;
+    });
+    text += "\n";
+
+    text += "👥 CONSUMO POR PERSONA\n";
+    outingSummary.participantSummaries.forEach(ps => {
+      text += `${ps.name.padEnd(15)} | Puso: ${formatCurrency(ps.paid).padStart(10)} | Cons.: ${formatCurrency(ps.consumed).padStart(10)}\n`;
+    });
+    text += "\n";
+
+    text += "💸 TRANSFERENCIAS\n";
+    if (outingSummary.settlements.length === 0) {
+      text += "¡Están todos al día!\n";
+    } else {
+      outingSummary.settlements.forEach(s => {
+        const toParticipant = participants.find(p => p.name === s.to);
+        const aliasStr = toParticipant?.bankAlias ? ` (Alias: ${toParticipant.bankAlias})` : '';
+        text += `${s.from} -> paga ${formatCurrency(s.amount)} a ${s.to}${aliasStr}\n`;
+      });
+    }
+    
+    text += `\n${separator}\n     Generado con amagi.github.io/amagi    \n${separator}`;
+    return text;
+  };
+
+  const handleCopyTextSummary = () => {
+    const text = getAsciiSummary();
+    navigator.clipboard.writeText(text).then(() => {
+      setTextCopiedToast(true);
+      setTimeout(() => setTextCopiedToast(false), 3000);
+    });
+  };
 
   const handleDownloadImage = async () => {
     if (!summaryRef.current) return;
@@ -217,7 +269,7 @@ function App() {
           )}
         </h2>
 
-        <div className="input-group">
+        <div className="input-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <input
             type="text"
             placeholder="Nombre del amigo (ej: Lucas, Sofia...)"
@@ -225,7 +277,14 @@ function App() {
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addParticipant()}
           />
-          <button onClick={addParticipant}>+ Agregar</button>
+          <input
+            type="text"
+            placeholder="Alias/CBU/CVU (Opcional)"
+            value={newAlias}
+            onChange={(e) => setNewAlias(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addParticipant()}
+          />
+          <button onClick={addParticipant} style={{ width: '100%' }}>+ Agregar Amigo</button>
         </div>
 
         {participants.length === 0 ? (
@@ -234,7 +293,10 @@ function App() {
           <div className="participant-tags">
             {participants.map((p) => (
               <div key={p.id} className="participant-tag">
-                <span>👤 {p.name}</span>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span>👤 {p.name}</span>
+                  {p.bankAlias && <small style={{ fontSize: '0.7rem', opacity: 0.8 }}>Alias: {p.bankAlias}</small>}
+                </div>
                 <button
                   type="button"
                   title="Eliminar"
@@ -403,6 +465,20 @@ function App() {
               </div>
             </div>
 
+            {/* Detalle de Gastos (Nuevo en imagen) */}
+            <div className="ticket-section-title">📝 Detalle de Gastos</div>
+            <div style={{ marginBottom: '15px' }}>
+              {expenses.map((e) => {
+                const payer = participants.find((p) => p.id === e.payerId)?.name || 'Desconocido';
+                return (
+                  <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '4px 0', borderBottom: '1px dashed #eee' }}>
+                    <span><strong>{e.description}</strong> (por {payer})</span>
+                    <span>{formatCurrency(e.amount)}</span>
+                  </div>
+                );
+              })}
+            </div>
+
             {/* ¿Cuánto gastó cada uno? */}
             <div className="ticket-section-title">👥 ¿Cuánto puso y consumió cada uno?</div>
             <div>
@@ -440,7 +516,7 @@ function App() {
 
             {/* Transferencias sugeridas */}
             <div className="ticket-section-title" style={{ marginTop: '18px' }}>
-              💸 Transferencias a realizar (mínimos pagos)
+              💸 Transferencias a realizar
             </div>
             {outingSummary.settlements.length === 0 ? (
               <p className="empty-state" style={{ padding: '12px' }}>
@@ -448,56 +524,78 @@ function App() {
               </p>
             ) : (
               <div>
-                {outingSummary.settlements.map((s, idx) => (
-                  <div key={idx} className="settlement-card">
-                    <div className="settlement-route">
-                      <span className="settlement-name">{s.from}</span>
-                      <span className="settlement-arrow">le paga a</span>
-                      <span className="settlement-name">{s.to}</span>
+                {outingSummary.settlements.map((s, idx) => {
+                  const toParticipant = participants.find(p => p.name === s.to);
+                  return (
+                    <div key={idx} className="settlement-card">
+                      <div className="settlement-route">
+                        <span className="settlement-name">{s.from}</span>
+                        <span className="settlement-arrow">le paga a</span>
+                        <span className="settlement-name">{s.to}</span>
+                      </div>
+                      <div className="settlement-amount">{formatCurrency(s.amount)}</div>
+                      {toParticipant?.bankAlias && (
+                        <div style={{ fontSize: '0.75rem', marginTop: '4px', textAlign: 'center', opacity: 0.8 }}>
+                          Alias: <strong>{toParticipant.bankAlias}</strong>
+                        </div>
+                      )}
                     </div>
-                    <div className="settlement-amount">{formatCurrency(s.amount)}</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
             <div className="ticket-footer" style={{ textAlign: 'center' }}>
-              Generado con amagi
+              Generado con amagi.github.io/amagi
             </div>
           </div>
 
           {/* Botones de Acción para Exportar / Compartir */}
           <div className="card">
             <h2>Compartir Resumen</h2>
-            <div className="export-actions">
+            <div className="export-actions" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <button
                 type="button"
                 className="btn-success"
                 disabled={isExporting}
                 onClick={handleShareImage}
+                style={{ width: '100%' }}
               >
-                {isExporting ? 'Generando...' : '📲 Compartir / Copiar Imagen'}
+                {isExporting ? 'Generando...' : '🖼️ Compartir / Copiar Imagen'}
               </button>
+              
               <button
                 type="button"
                 className="outline-primary"
+                onClick={handleCopyTextSummary}
+                style={{ width: '100%' }}
+              >
+                📋 Copiar Resumen de Texto (Ticket)
+              </button>
+
+              <button
+                type="button"
+                className="outline"
                 disabled={isExporting}
                 onClick={handleDownloadImage}
+                style={{ width: '100%', fontSize: '0.85rem' }}
               >
-                📥 Descargar Imagen (PNG)
+                📥 Descargar PNG
               </button>
             </div>
 
             {copiedToast && (
-              <p style={{ marginTop: '10px', color: 'var(--success)', fontWeight: 'bold', textAlign: 'center' }}>
-                ✅ ¡Imagen copiada al portapapeles! Ya puedes pegarla en WhatsApp.
-              </p>
+              <p className="toast-msg">✅ ¡Imagen copiada al portapapeles!</p>
+            )}
+            
+            {textCopiedToast && (
+              <p className="toast-msg">✅ ¡Ticket de texto copiado al portapapeles!</p>
             )}
 
             <button
               type="button"
               className="outline"
-              style={{ width: '100%', marginTop: '16px', color: 'var(--danger)', borderColor: '#fca5a5' }}
+              style={{ width: '100%', marginTop: '24px', color: 'var(--danger)', borderColor: '#fca5a5' }}
               onClick={handleResetAll}
             >
               🔄 Reiniciar toda la salida

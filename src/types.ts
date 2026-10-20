@@ -1,6 +1,7 @@
 export interface Participant {
   id: string;
   name: string;
+  bankAlias?: string;
 }
 
 export interface Expense {
