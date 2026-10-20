@@ -31,6 +31,7 @@ function App() {
   const [expenses, setExpenses] = usePersistentState<Expense[]>('expenses', []);
   const [newName, setNewName] = useState('');
   const [newAlias, setNewAlias] = useState('');
+  const [editingParticipantId, setEditingParticipantId] = useState<string | null>(null);
   
   // Expense Form State
   const [description, setDescription] = useState('');
@@ -54,21 +55,47 @@ function App() {
     const trimmedName = newName.trim();
     const trimmedAlias = newAlias.trim();
     if (!trimmedName) return;
-    if (participants.some((p) => p.name.toLowerCase() === trimmedName.toLowerCase())) {
-      alert('Ya existe un participante con ese nombre');
-      return;
+
+    if (editingParticipantId) {
+      // Update existing participant
+      setParticipants(participants.map(p => 
+        p.id === editingParticipantId 
+          ? { ...p, name: trimmedName, bankAlias: trimmedAlias || undefined }
+          : p
+      ));
+      setEditingParticipantId(null);
+    } else {
+      // Add new participant
+      if (participants.some((p) => p.name.toLowerCase() === trimmedName.toLowerCase())) {
+        alert('Ya existe un participante con ese nombre');
+        return;
+      }
+      const newParticipant: Participant = {
+        id: crypto.randomUUID(),
+        name: trimmedName,
+        bankAlias: trimmedAlias || undefined,
+      };
+      const updated = [...participants, newParticipant];
+      setParticipants(updated);
+      setSelectedParticipants(updated.map((p) => p.id));
     }
-    const newParticipant: Participant = {
-      id: crypto.randomUUID(),
-      name: trimmedName,
-      bankAlias: trimmedAlias || undefined,
-    };
-    const updated = [...participants, newParticipant];
-    setParticipants(updated);
-    setSelectedParticipants(updated.map((p) => p.id));
+    
     setNewName('');
     setNewAlias('');
     setShowSummary(false);
+  };
+
+  const startEditParticipant = (p: Participant) => {
+    setEditingParticipantId(p.id);
+    setNewName(p.name);
+    setNewAlias(p.bankAlias || '');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const cancelEdit = () => {
+    setEditingParticipantId(null);
+    setNewName('');
+    setNewAlias('');
   };
 
   const removeParticipant = (id: string) => {
@@ -142,9 +169,15 @@ function App() {
     text += "📝 DETALLE DE GASTOS\n";
     expenses.forEach(e => {
       const payer = participants.find(p => p.id === e.payerId)?.name || 'Desconocido';
-      text += `- ${e.description}: ${formatCurrency(e.amount)} (Pagó: ${payer})\n`;
+      const expenseParticipants = e.participantIds
+        .map(id => participants.find(p => p.id === id)?.name)
+        .filter(Boolean)
+        .join(', ');
+      
+      text += `- ${e.description}: ${formatCurrency(e.amount)}\n`;
+      text += `  Pagó: ${payer}\n`;
+      text += `  Para: ${expenseParticipants}\n\n`;
     });
-    text += "\n";
 
     text += "👥 CONSUMO POR PERSONA\n";
     outingSummary.participantSummaries.forEach(ps => {
@@ -284,7 +317,16 @@ function App() {
             onChange={(e) => setNewAlias(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addParticipant()}
           />
-          <button onClick={addParticipant} style={{ width: '100%' }}>+ Agregar Amigo</button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={addParticipant} style={{ flex: 1 }}>
+              {editingParticipantId ? '✓ Guardar' : '+ Agregar Amigo'}
+            </button>
+            {editingParticipantId && (
+              <button onClick={cancelEdit} className="outline" style={{ flex: 1 }}>
+                Cancelar
+              </button>
+            )}
+          </div>
         </div>
 
         {participants.length === 0 ? (
@@ -292,18 +334,29 @@ function App() {
         ) : (
           <div className="participant-tags">
             {participants.map((p) => (
-              <div key={p.id} className="participant-tag">
+              <div key={p.id} className="participant-tag" style={{ justifyContent: 'space-between', width: '100%', borderRadius: '8px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span>👤 {p.name}</span>
+                  <span style={{ fontWeight: 600 }}>👤 {p.name}</span>
                   {p.bankAlias && <small style={{ fontSize: '0.7rem', opacity: 0.8 }}>Alias: {p.bankAlias}</small>}
                 </div>
-                <button
-                  type="button"
-                  title="Eliminar"
-                  onClick={() => removeParticipant(p.id)}
-                >
-                  ✕
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="outline"
+                    style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                    onClick={() => startEditParticipant(p)}
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                    onClick={() => removeParticipant(p.id)}
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -470,10 +523,20 @@ function App() {
             <div style={{ marginBottom: '15px' }}>
               {expenses.map((e) => {
                 const payer = participants.find((p) => p.id === e.payerId)?.name || 'Desconocido';
+                const expenseParticipants = e.participantIds
+                  .map(id => participants.find(p => p.id === id)?.name)
+                  .filter(Boolean)
+                  .join(', ');
+
                 return (
-                  <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '4px 0', borderBottom: '1px dashed #eee' }}>
-                    <span><strong>{e.description}</strong> (por {payer})</span>
-                    <span>{formatCurrency(e.amount)}</span>
+                  <div key={e.id} style={{ padding: '8px 0', borderBottom: '1px dashed #eee' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
+                      <strong>{e.description}</strong>
+                      <strong>{formatCurrency(e.amount)}</strong>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Pagó: {payer} • Para: {expenseParticipants}
+                    </div>
                   </div>
                 );
               })}
@@ -546,7 +609,7 @@ function App() {
             )}
 
             <div className="ticket-footer" style={{ textAlign: 'center' }}>
-              Generado con amagi.github.io/amagi
+              Generado con yurikunik.github.io/amagi
             </div>
           </div>
 
